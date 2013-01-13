@@ -1,0 +1,5 @@
+.idea/
+CACHE/
+certs/
+*.pyc
+.DS_Store
