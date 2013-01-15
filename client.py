@@ -4,7 +4,7 @@ from autobahn.websocket import WebSocketClientFactory,\
     WebSocketClientProtocol,\
     connectWS
 import sys
-from rpi_ws.client_protocol import RPIClientProtocol
+from rpi_ws.client_protocol import RPIClientProtocol, ReconnectingWebSocketClientFactory
 from rpi_ws import settings
 
 USE_SSL = True
@@ -24,7 +24,8 @@ def main():
     if DEBUG:
         log.startLogging(sys.stdout)
 
-    factory = WebSocketClientFactory(server_url, useragent=settings.RPI_USER_AGENT, debug=DEBUG)
+    #factory = WebSocketClientFactory(server_url, useragent=settings.RPI_USER_AGENT, debug=DEBUG)
+    factory = ReconnectingWebSocketClientFactory(server_url, useragent=settings.RPI_USER_AGENT, debug=DEBUG)
     factory.protocol = RPIClientProtocol
 
     connectWS(factory)

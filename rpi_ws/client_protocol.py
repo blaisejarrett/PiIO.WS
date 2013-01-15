@@ -1,6 +1,7 @@
 from twisted.internet import reactor
 from twisted.python import log
-from autobahn.websocket import WebSocketClientProtocol
+from autobahn.websocket import WebSocketClientProtocol, WebSocketClientFactory
+from twisted.internet.protocol import ReconnectingClientFactory
 import rpi_data.interface as interface
 import rpi_data.utility
 import json
@@ -94,3 +95,6 @@ class RPIClientProtocol(WebSocketClientProtocol, common_protocol.ProtocolState):
                 log.msg("RPIClientProtocol.onMessage - Received a message in an unknown state, ignored")
         state.onMessage(msg)
 
+
+class ReconnectingWebSocketClientFactory(ReconnectingClientFactory, WebSocketClientFactory):
+    maxDelay = 30

@@ -30,7 +30,20 @@ class SiteComm(resource.Resource):
         # should be called to update configs by admin change
 
         request.setHeader("Content-Type", "application/json")
-        return str(request.args)
+
+        try:
+            rpis = json.loads(request.args['json'][0])
+
+            for rpi in rpis:
+                if self.ws_factory.debug:
+                    log.msg('render_POST - Recieved config for RPI %s' % rpi['mac'])
+        except:
+            if self.ws_factory.debug:
+                log.msg('render_POST -  Error parsing rpi configs')
+            return 'error'
+
+
+        return 'ok'
 
 
     def register_rpi(self, rpi):
@@ -45,9 +58,10 @@ class SiteComm(resource.Resource):
         try:
             url = urllib2.Request('http://%s/ws_comm/register/' % settings.SITE_SERVER_ADDRESS, post_data)
             url_response = urllib2.urlopen(url)
-        except urllib2.HTTPError, e:
-            print e.read()
-        print url_response.read()
+            print url_response.read()
+        except:
+            pass
+        # TODO: success vailidation
 
         # register should return configs
 
