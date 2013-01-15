@@ -36,7 +36,9 @@ class SiteComm(resource.Resource):
 
             for rpi in rpis:
                 if self.ws_factory.debug:
-                    log.msg('render_POST - Recieved config for RPI %s' % rpi['mac'])
+                    log.msg('render_POST - Received config for RPI %s' % rpi['mac'])
+                # delegate request to the WS factory
+                self.ws_factory.config_rpi(rpi)
         except:
             if self.ws_factory.debug:
                 log.msg('render_POST -  Error parsing rpi configs')
@@ -58,7 +60,7 @@ class SiteComm(resource.Resource):
         try:
             url = urllib2.Request('http://%s/ws_comm/register/' % settings.SITE_SERVER_ADDRESS, post_data)
             url_response = urllib2.urlopen(url)
-            print url_response.read()
+            url_response.read()
         except:
             pass
         # TODO: success vailidation
@@ -75,9 +77,9 @@ class SiteComm(resource.Resource):
         try:
             url = urllib2.Request('http://%s/ws_comm/disconnect/' % settings.SITE_SERVER_ADDRESS, post_data)
             url_response = urllib2.urlopen(url)
-        except urllib2.HTTPError, e:
-            print e.read()
-        print url_response.read()
+            print url_response.read()
+        except:
+            pass
 
 
 class ServerState(common_protocol.State):
@@ -117,6 +119,22 @@ class UserClient(Client):
 RPI client related protocol and states
 """
 
+class RPIStreamState(ServerState):
+    """
+    In this state the RPI has been configured and is streaming data
+    """
+    def __init__(self, client, config):
+        super(RPIStreamState, self).__init__(client)
+        self.config = config
+
+    def deactivated(self):
+        # TODO: ensure remove RPI drops to config state
+        super(RPIStreamState, self).deactivated()
+
+    def drop_to_config(self):
+        # TODO: ensure remove RPI drops to config state
+        self.client.pop_state()
+
 class RPIConfigState(ServerState):
     """
     In this state, the RPI is waiting to be configured.
@@ -124,6 +142,21 @@ class RPIConfigState(ServerState):
     """
     def __init__(self, client):
         super(RPIConfigState, self).__init__(client)
+
+    def onMessage(self, msg):
+        pass
+
+    def config_io(self, reads, writes):
+        """
+        read/writes are lsts of dicts with the following:
+            'ch_port':  integer or boolean (check cls req)
+            'equation': empty, or python style math
+            'cls_name': class name as string, ex) 'ADC'
+
+        Returns True/False for success
+        """
+        if self.client.protocol.debug:
+            log.msg('RPIConfigState - Pushing configs to remote RPI')
 
 
 class RPIRegisterState(ServerState):
@@ -196,6 +229,36 @@ class RPIClient(Client):
         if hasattr(self, 'mac'):
             self.protocol.factory.disconnect_rpi(self)
 
+    def config_io(self, reads, writes):
+        """
+        read/writes are lsts of dicts with the following:
+            'ch_port':  integer or boolean (check cls req)
+            'equation': empty, or python style math
+            'cls_name': class name as string, ex) 'ADC'
+
+        Returns True/False for success
+        """
+        # check the state of the RPI client
+        try:
+            state = self.current_state()
+        except IndexError:
+            # RPI has no states
+            return False
+
+        if isinstance(state, RPIConfigState):
+            # ready to be configured
+            # RPI was waiting for config
+            pass
+        elif isinstance(state, RPIStreamState):
+            # RPI is being re-configured
+            state.drop_to_config()
+        else:
+            # RPI can't be put into a config state, fail
+            return False
+
+        state = self.current_state()
+        # delegate the job to the config state
+        return state.config_io(reads, writes)
 
 
 class RPIServerProtocol(WebSocketServerProtocol):
@@ -245,6 +308,9 @@ class RPIServerProtocol(WebSocketServerProtocol):
 
 
 class RPISocketServerFactory(WebSocketServerFactory):
+    """
+    Manages every RPI connected to the server.
+    """
     def __init__(self, *args, **kwargs):
         WebSocketServerFactory.__init__(self, *args, **kwargs)
 
@@ -254,7 +320,9 @@ class RPISocketServerFactory(WebSocketServerFactory):
         self.user_client = []
 
     def register_rpi(self, rpi):
+        # register on the site server
         reactor.callInThread(self.sitecomm.register_rpi, rpi)
+        # register locally to the factory
         self.rpi_clients[rpi.mac] = rpi
         if self.debug:
             log.msg("RPISocketServerFactory.register_rpi - %s registered, %d rpi" % (rpi.mac, len(self.rpi_clients)))
@@ -265,4 +333,27 @@ class RPISocketServerFactory(WebSocketServerFactory):
             reactor.callInThread(self.sitecomm.disconnect_rpi, rpi)
             del self.rpi_clients[rpi.mac]
 
+    def config_rpi(self, configs):
+        """
+        Not thread safe
+
+        configs:
+            dict with the following keys:
+                'read': lst of port configs
+                'write: lst of port configs
+                'mac':  '00:00:...'
+            port config dict with the following keys:
+                'ch_port':  integer or boolean (check cls req)
+                'equation': empty, or python style math
+                'cls_name': class name as string, ex) 'ADC'
+
+        Return: True/False for success
+        """
+        # check if RPI is actually an active client
+        mac = configs['mac']
+        if mac not in self.rpi_clients:
+            return False
+
+        rpi_client = self.rpi_clients[mac]
+        return rpi_client.config_io(reads=configs['read'], writes=configs['write'])
 

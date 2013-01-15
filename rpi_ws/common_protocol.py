@@ -8,15 +8,18 @@ class State(object):
         """
         When state has become the top of the stack
         """
+        self.active = True
         if self.protocol.debug:
             log.msg("%s.activated()" % self.__class__.__name__)
 
     def deactivated(self):
+        self.active = False
         if self.protocol.debug:
             log.msg("%s.deactivated()" % self.__class__.__name__)
 
     def __init__(self, protocol):
         self.protocol = protocol
+        self.active = False
 
 
 class ServerCommands(object):
@@ -51,4 +54,7 @@ class ProtocolState(object):
     def pop_state(self):
         self.state_stack.pop().deactivated()
         self.state_stack.pop_wr().activated()
+
+    def current_state(self):
+        return self.state_stack.pop_wr()
 
