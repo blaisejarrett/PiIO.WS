@@ -25,6 +25,11 @@ class State(object):
 class ServerCommands(object):
     AUTH = 'auth'
     ACK = 'ack'
+    CONFIG = 'config'
+
+class RPIClientCommands(object):
+    CONFIG_OK = 'c_ok'
+    CONFIG_FAIL = 'c_fail'
 
 
 class StateStack(list):

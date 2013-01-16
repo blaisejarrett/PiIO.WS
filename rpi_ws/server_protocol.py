@@ -63,7 +63,7 @@ class SiteComm(resource.Resource):
             url_response.read()
         except:
             pass
-        # TODO: success vailidation
+        # TODO: success validation
 
         # register should return configs
 
@@ -77,7 +77,7 @@ class SiteComm(resource.Resource):
         try:
             url = urllib2.Request('http://%s/ws_comm/disconnect/' % settings.SITE_SERVER_ADDRESS, post_data)
             url_response = urllib2.urlopen(url)
-            print url_response.read()
+            url_response.read()
         except:
             pass
 
@@ -123,16 +123,21 @@ class RPIStreamState(ServerState):
     """
     In this state the RPI has been configured and is streaming data
     """
-    def __init__(self, client, config):
+    def __init__(self, client, reads, writes):
         super(RPIStreamState, self).__init__(client)
-        self.config = config
+        self.config_reads = reads
+        self.config_writes = writes
 
     def deactivated(self):
         # TODO: ensure remove RPI drops to config state
         super(RPIStreamState, self).deactivated()
 
     def drop_to_config(self):
-        # TODO: ensure remove RPI drops to config state
+        # NOTE: If the RPI does not drop immediately this will be problematic.
+        # TODO: Fix note!
+        # drop remote RPI to config state
+        msg = {'cmd':common_protocol.ServerCommands.CONFIG}
+        self.client.protocol.sendMessage(json.dumps(msg))
         self.client.pop_state()
 
 class RPIConfigState(ServerState):
@@ -144,7 +149,17 @@ class RPIConfigState(ServerState):
         super(RPIConfigState, self).__init__(client)
 
     def onMessage(self, msg):
-        pass
+        msg = json.loads(msg)
+
+        if msg['cmd'] == common_protocol.RPIClientCommands.CONFIG_OK:
+            self.client.push_state(RPIStreamState(self.client,
+                reads=self.config_reads,
+                writes=self.config_writes
+            ))
+        elif msg['cmd'] == common_protocol.RPIClientCommands.CONFIG_FAILC:
+            if self.client.protocol.debug:
+                log.msg('RPIConfigState - RPI failed to configure')
+            # TODO: Notify web server
 
     def config_io(self, reads, writes):
         """
@@ -155,8 +170,15 @@ class RPIConfigState(ServerState):
 
         Returns True/False for success
         """
+        self.config_reads = reads
+        self.config_writes = writes
         if self.client.protocol.debug:
             log.msg('RPIConfigState - Pushing configs to remote RPI')
+
+        msg = {'cmd':common_protocol.ServerCommands.CONFIG,
+               'payload':{'read':reads, 'write':writes}}
+
+        self.client.protocol.sendMessage(json.dumps(msg))
 
 
 class RPIRegisterState(ServerState):
@@ -330,6 +352,8 @@ class RPISocketServerFactory(WebSocketServerFactory):
 
     def disconnect_rpi(self, rpi):
         if hasattr(rpi, 'mac'):
+            if self.debug:
+                log.msg("RPISocketServerFactory.disconnect_rpi - %s rpi disconnected" % (rpi.mac,))
             reactor.callInThread(self.sitecomm.disconnect_rpi, rpi)
             del self.rpi_clients[rpi.mac]
 

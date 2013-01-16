@@ -11,16 +11,96 @@ import binascii
 import settings, common_protocol
 
 
+class StreamState(common_protocol.State):
+    def __init__(self, protocol, reads, writes):
+        # reads/writes look like this
+        # {u'cls:ADC, port:3': {'equations': [u'zzzz', u'asdfadfad'], 'obj': <rpi_data.interface.ADC object at 0x036D18D0>}}
+        super(StreamState, self).__init__(protocol)
+        self.config_reads = reads
+        self.config_writes = writes
+
+    def onMessage(self, msg):
+        msg = json.loads(msg)
+
+        if msg['cmd'] == common_protocol.ServerCommands.CONFIG:
+            # wrong state, drop
+            # flush IO
+            io_clss = interface.get_interface_desc()
+            for cls in io_clss['read']:
+                cls.flush()
+            for cls in io_clss['write']:
+                cls.flush()
+            self.protocol.pop_state()
 
 class ConfigState(common_protocol.State):
     """
     Responsible for setting up the IO
     """
-    pass
+    def onMessage(self, msg):
+        msg = json.loads(msg)
 
+        if msg['cmd'] == common_protocol.ServerCommands.CONFIG:
+            reads = msg['payload']['read']
+            writes = msg['payload']['write']
 
-class StreamState(common_protocol.State):
-    pass
+            if self.protocol.factory.debug:
+                log.msg("ConfigState.onMessage - Received configs, %d reads, %d writes"
+                        % (len(reads), len(writes)))
+
+            # attempt to configure IO.......
+            def config_io(io_collection):
+                # deal with duplicates...........
+                # duplicate equations allowed, duplicate instances not allowed
+                instanced_io_dict = {}
+                for io in io_collection:
+                    cls_str = io['cls_name']
+                    ch_port = io['ch_port']
+                    equation = io['equation']
+                    if self.protocol.factory.debug:
+                        log.msg('ConfigState - Configuring module %s on ch/port %s with eq \'%s\'' %
+                            (cls_str, ch_port, equation))
+
+                    key = 'cls:%s, port:%s' % (cls_str, ch_port)
+                    if key not in instanced_io_dict:
+                        cls = getattr(interface, cls_str)
+                        try:
+                            instance = cls(ch_port)
+                        except Exception, ex:
+                            if self.protocol.factory.debug:
+                                log.msg('ConfigState - Ex creating module %s', str(ex))
+                            continue
+
+                        io_new_dict = {'obj':instance}
+                        if equation != '':
+                            io_new_dict['equations'] = [equation]
+                        else:
+                            io_new_dict['equations'] = []
+                        instanced_io_dict[key] = io_new_dict
+                    else:
+                        # we can have more then one equation per instance
+                        existing_instance = instanced_io_dict[key]
+                        equations = existing_instance['equations']
+                        if equation not in equations:
+                            equations.append(equation)
+
+                return instanced_io_dict
+
+            # looks like this:
+            # {u'cls:ADC, port:3': {'equations': [u'zzzz', u'asdfadfad'], 'obj': <rpi_data.interface.ADC object at 0x036D18D0>}}
+            read_instances = config_io(reads)
+            write_instances = config_io(writes)
+
+            if self.protocol.factory.debug:
+                log.msg('ConfigState - Instantiated %d read interfaces' % len(read_instances))
+                log.msg('ConfigState - Instantiated %d write interfaces' % len(write_instances))
+
+            # there should be some feedback done here if something fails
+            if read_instances is not None and write_instances is not None:
+                msg = {'cmd':common_protocol.RPIClientCommands.CONFIG_OK}
+                self.protocol.sendMessage(json.dumps(msg))
+
+                self.protocol.push_state(StreamState(self.protocol, reads=read_instances, writes=write_instances))
+
 
 
 class RegisterState(common_protocol.State):

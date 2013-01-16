@@ -2,6 +2,10 @@ import time
 import random
 
 
+class CHPortInUseException(Exception): pass
+class CHPortDoesntExistException(Exception): pass
+
+
 class IBase(object):
     IO_TYPE_BINARY = 'B'
     IO_TYPE_INTEGER = 'I'
@@ -11,13 +15,40 @@ class IBase(object):
     # override this, stored value, description
     # stored value must be an integer, desc must be str
     # ex: ((1, 'GPIO1'),)
-    IO_CHOICES = ()
+    IO_CHOICES = (())
+
+    ALLOW_DUPLICATE_PORTS = False
+    channels_in_use = {}
+
+    def __init__(self, ch_port):
+        self.ch_port = ch_port
+
+        port_exists = False
+        for existing_port, existing_port_name in self.IO_CHOICES:
+            if existing_port == ch_port:
+                port_exists = True
+                break
+        if not port_exists:
+            raise CHPortDoesntExistException('Port %d does not exist' % ch_port)
+
+        if not self.__class__.ALLOW_DUPLICATE_PORTS:
+            if ch_port in self.__class__.channels_in_use:
+                raise CHPortInUseException("Channel %d is in use" % ch_port)
+            self.__class__.channels_in_use[ch_port] = self
+
+    @classmethod
+    def flush(cls):
+        """
+        Clean out all instances
+        """
+        for key, value in cls.channels_in_use.items():
+            value.close()
 
     def close(self):
         """
         Because we're probably dealing with IO
         """
-        raise NotImplementedError("Should have implemented this")
+        del self.__class__.channels_in_use[self.ch_port]
 
     @classmethod
     def open(cls, *args, **kwargs):
@@ -79,15 +110,8 @@ class ADC(IRead):
 
     channels_in_use = {}
 
-    def __init__(self, channel):
-        if channel in ADC.channels_in_use:
-            raise ADC.ChannelInUseError("Channel %d is in use" % channel)
-
-        ADC.channels_in_use[channel] = self
-        self.channel = channel
-
-    def close(self):
-        del ADC.channels_in_use[self.channel]
+    def __init__(self, ch_port):
+        super(ADC, self).__init__(ch_port)
 
     def read(self):
         # for now simulate IO time
@@ -120,28 +144,16 @@ class GPIOInput(IRead):
         (27, 'GPIO27 P13'),
     )
 
-    class PortInUseError(Exception): pass
-    class PortDoesntExistError(Exception): pass
-
     ports_in_use = {}
 
-    def __init__(self, port):
-        if port in GPIOInput.ports_in_use:
-            raise GPIOInput.PortInUseError("Port %d is in use" % port)
-
-        # Implement further logic to map to existing ports otherwise throw
-
-        GPIOInput.ports_in_use[port] = self
-        self.port = port
+    def __init__(self, ch_port):
+        super(GPIOInput, self).__init__(ch_port)
 
     def read(self):
         """
         Note: GPIO reads should be faster then network IO, careful of poll rate
         """
         return True
-
-    def close(self):
-        del GPIOInput.ports_in_use[self.port]
 
 
 class GPIOOutput(IWrite):
@@ -168,6 +180,10 @@ class GPIOOutput(IWrite):
         (25, 'GPIO25 P22'),
         (27, 'GPIO27 P13'),
     )
+
+    def __init__(self, ch_port):
+        super(GPIOOutput, self).__init__(ch_port)
+
 
     def write(self, value):
         print "wrote %s" % str(value)
