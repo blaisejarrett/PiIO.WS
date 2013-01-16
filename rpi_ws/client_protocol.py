@@ -22,7 +22,7 @@ class StreamState(common_protocol.State):
     def onMessage(self, msg):
         msg = json.loads(msg)
 
-        if msg['cmd'] == common_protocol.ServerCommands.CONFIG:
+        if msg['cmd'] == common_protocol.ServerCommands.DROP_TO_CONFIG:
             # wrong state, drop
             # flush IO
             io_clss = interface.get_interface_desc()
@@ -31,6 +31,9 @@ class StreamState(common_protocol.State):
             for cls in io_clss['write']:
                 cls.flush()
             self.protocol.pop_state()
+
+            resp_msg = {'cmd':common_protocol.RPIClientCommands.DROP_TO_CONFIG_OK}
+            self.protocol.sendMessage(json.dumps(resp_msg))
 
 class ConfigState(common_protocol.State):
     """

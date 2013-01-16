@@ -132,13 +132,21 @@ class RPIStreamState(ServerState):
         # TODO: ensure remove RPI drops to config state
         super(RPIStreamState, self).deactivated()
 
-    def drop_to_config(self):
-        # NOTE: If the RPI does not drop immediately this will be problematic.
-        # TODO: Fix note!
+    def onMessage(self, msg):
+        msg = json.loads(msg)
+
+        if msg['cmd'] == common_protocol.RPIClientCommands.DROP_TO_CONFIG_OK:
+            # order here is important, pop first!
+            self.client.pop_state()
+            self.client.current_state().config_io(self.delegate_config_reads, self.delegate_config_writes)
+
+    def drop_to_config(self, reads, writes):
         # drop remote RPI to config state
-        msg = {'cmd':common_protocol.ServerCommands.CONFIG}
+        msg = {'cmd':common_protocol.ServerCommands.DROP_TO_CONFIG}
         self.client.protocol.sendMessage(json.dumps(msg))
-        self.client.pop_state()
+        self.delegate_config_reads = reads
+        self.delegate_config_writes = writes
+
 
 class RPIConfigState(ServerState):
     """
@@ -273,7 +281,9 @@ class RPIClient(Client):
             pass
         elif isinstance(state, RPIStreamState):
             # RPI is being re-configured
-            state.drop_to_config()
+            state.drop_to_config(reads, writes)
+            # config has to be delegated
+            return True
         else:
             # RPI can't be put into a config state, fail
             return False

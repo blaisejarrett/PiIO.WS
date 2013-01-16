@@ -26,10 +26,12 @@ class ServerCommands(object):
     AUTH = 'auth'
     ACK = 'ack'
     CONFIG = 'config'
+    DROP_TO_CONFIG = 'drop_to_config'
 
 class RPIClientCommands(object):
     CONFIG_OK = 'c_ok'
     CONFIG_FAIL = 'c_fail'
+    DROP_TO_CONFIG_OK = 'drop_to_config_ok'
 
 
 class StateStack(list):
