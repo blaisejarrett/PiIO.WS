@@ -19,7 +19,7 @@ def main():
     else:
         uri_type = "ws"
 
-    server_url = "%s://%s:%d" % (uri_type, SERVER, PORT)
+    server_url = "%s://%s:%d/rpi/" % (uri_type, SERVER, PORT)
 
     if DEBUG:
         log.startLogging(sys.stdout)

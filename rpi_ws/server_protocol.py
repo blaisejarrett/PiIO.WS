@@ -1,6 +1,7 @@
 from twisted.python import log
 from twisted.internet import threads, reactor
-from autobahn.websocket import WebSocketServerFactory, WebSocketServerProtocol
+from autobahn.websocket import WebSocketServerFactory, WebSocketServerProtocol, HttpException
+import autobahn.httpstatus as httpstatus
 from twisted.web import resource
 import json
 import time
@@ -338,6 +339,31 @@ class RPIServerProtocol(WebSocketServerProtocol):
     def __init__(self):
         self.client = None
 
+    def onConnect(self, connectionRequest):
+        def user(headers):
+            if self.debug:
+                log.msg("RPIServerProtocol.onConnect - User connected")
+            return UserClient(self)
+        def rpi(headers):
+            # check user agent
+            if 'user-agent' in headers:
+                if headers['user-agent'] == settings.RPI_USER_AGENT:
+                    if self.debug:
+                        log.msg("RPIServerProtocol.onConnect - RPI connected")
+                    return RPIClient(self)
+            raise HttpException(httpstatus.HTTP_STATUS_CODE_FORBIDDEN[0], httpstatus.HTTP_STATUS_CODE_FORBIDDEN[1])
+
+        paths = {
+            '/':user,
+            '/rpi/':rpi,
+            '/rpi':rpi,
+        }
+
+        if connectionRequest.path not in paths:
+            raise HttpException(httpstatus.HTTP_STATUS_CODE_NOT_FOUND[0], httpstatus.HTTP_STATUS_CODE_NOT_FOUND[1])
+
+        self.client = paths[connectionRequest.path](connectionRequest.headers)
+
     def onMessage(self, msg, binary):
         """
         Message received from client
@@ -349,20 +375,6 @@ class RPIServerProtocol(WebSocketServerProtocol):
 
         self.client.onMessage(msg)
 
-    def onOpen(self):
-        # check user agent
-        if 'user-agent' in self.http_headers:
-            if self.http_headers['user-agent'] == settings.RPI_USER_AGENT:
-                if self.debug:
-                    log.msg("RPIServerProtocol.onOpen - RPI connected")
-                self.client = RPIClient(self)
-                return
-
-        if self.debug:
-            log.msg("RPIServerProtocol.onOpen - User connected")
-        self.client = UserClient(self)
-
-
     def onClose(self, wasClean, code, reason):
         """
         Connect closed, cleanup
@@ -372,6 +384,7 @@ class RPIServerProtocol(WebSocketServerProtocol):
         if self.client is None:
             if self.debug:
                 log.msg("RPIServerProtocol.onClose - No Client type")
+            return
 
         self.client.onClose(wasClean, code, reason)
 
