@@ -51,58 +51,43 @@ class ConfigState(common_protocol.State):
                         % (len(reads), len(writes)))
 
             # attempt to configure IO.......
-            def config_io(io_collection):
-                # deal with duplicates...........
-                # duplicate equations allowed, duplicate instances not allowed
-                instanced_io_dict = {}
-                for io in io_collection:
-                    cls_str = io['cls_name']
-                    ch_port = io['ch_port']
-                    equation = io['equation']
+            def instantiate_io(io_collection):
+                # instantiate interface instances
+                # {u'cls:ADC, port:3': {'cls_name':'ADC', 'ch_port':3, 'equations': [u'dddd', u'']}}
+                # to:
+                # {u'cls:ADC, port:3': {'cls_name':'ADC', 'ch_port':3, 'equations': [u'dddd', u''], 'obj':<instance>}}
+                for key, value in io_collection.iteritems():
+                    cls_str = value['cls_name']
+                    ch_port = value['ch_port']
                     if self.protocol.factory.debug:
-                        log.msg('ConfigState - Configuring module %s on ch/port %s with eq \'%s\'' %
-                            (cls_str, ch_port, equation))
+                        log.msg('ConfigState - Configuring module %s on ch/port %d' %
+                            (cls_str, ch_port))
 
-                    key = 'cls:%s, port:%s' % (cls_str, ch_port)
-                    if key not in instanced_io_dict:
-                        cls = getattr(interface, cls_str)
-                        try:
-                            instance = cls(ch_port)
-                        except Exception, ex:
-                            if self.protocol.factory.debug:
-                                log.msg('ConfigState - Ex creating module %s', str(ex))
-                            continue
+                    cls = getattr(interface, cls_str)
+                    try:
+                        instance = cls(ch_port)
+                    except Exception, ex:
+                        if self.protocol.factory.debug:
+                            log.msg('ConfigState - Ex creating module %s', str(ex))
+                        value['obj'] = None
+                        continue
 
-                        io_new_dict = {'obj':instance}
-                        if equation != '':
-                            io_new_dict['equations'] = [equation]
-                        else:
-                            io_new_dict['equations'] = []
-                        instanced_io_dict[key] = io_new_dict
-                    else:
-                        # we can have more then one equation per instance
-                        existing_instance = instanced_io_dict[key]
-                        equations = existing_instance['equations']
-                        if equation not in equations:
-                            equations.append(equation)
+                    value['obj'] = instance
 
-                return instanced_io_dict
-
-            # looks like this:
-            # {u'cls:ADC, port:3': {'equations': [u'zzzz', u'asdfadfad'], 'obj': <rpi_data.interface.ADC object at 0x036D18D0>}}
-            read_instances = config_io(reads)
-            write_instances = config_io(writes)
+            instantiate_io(reads)
+            instantiate_io(writes)
 
             if self.protocol.factory.debug:
-                log.msg('ConfigState - Instantiated %d read interfaces' % len(read_instances))
-                log.msg('ConfigState - Instantiated %d write interfaces' % len(write_instances))
+                log.msg('ConfigState - Instantiated %d read interfaces' % len(reads))
+                log.msg('ConfigState - Instantiated %d write interfaces' % len(writes))
+
+            log.msg(str(reads))
 
             # there should be some feedback done here if something fails
-            if read_instances is not None and write_instances is not None:
-                msg = {'cmd':common_protocol.RPIClientCommands.CONFIG_OK}
-                self.protocol.sendMessage(json.dumps(msg))
+            msg = {'cmd':common_protocol.RPIClientCommands.CONFIG_OK}
+            self.protocol.sendMessage(json.dumps(msg))
 
-                self.protocol.push_state(StreamState(self.protocol, reads=read_instances, writes=write_instances))
+            self.protocol.push_state(StreamState(self.protocol, reads=reads, writes=writes))
 
 
 

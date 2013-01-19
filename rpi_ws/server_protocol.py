@@ -125,11 +125,11 @@ class RPIStreamState(ServerState):
     """
     def __init__(self, client, reads, writes):
         super(RPIStreamState, self).__init__(client)
+        # {'cls:ADC, port:3': {'cls_name':'ADC', 'ch_port':3, 'equations': ['zzzz', 'asdfadfad']}}
         self.config_reads = reads
         self.config_writes = writes
 
     def deactivated(self):
-        # TODO: ensure remove RPI drops to config state
         super(RPIStreamState, self).deactivated()
 
     def onMessage(self, msg):
@@ -164,7 +164,7 @@ class RPIConfigState(ServerState):
                 reads=self.config_reads,
                 writes=self.config_writes
             ))
-        elif msg['cmd'] == common_protocol.RPIClientCommands.CONFIG_FAILC:
+        elif msg['cmd'] == common_protocol.RPIClientCommands.CONFIG_FAIL:
             if self.client.protocol.debug:
                 log.msg('RPIConfigState - RPI failed to configure')
             # TODO: Notify web server
@@ -178,13 +178,50 @@ class RPIConfigState(ServerState):
 
         Returns True/False for success
         """
-        self.config_reads = reads
-        self.config_writes = writes
+        self.display_reads = reads
+        self.display_writes = writes
+
+        # convert format from list of displays:
+        # [{u'ch_port': 3, u'equation': u'', u'cls_name': u'ADC'}, {u'ch_port': 3, u'equation': u'', u'cls_name': u'ADC'}]
+        # [{u'ch_port': 3, u'equation': u'', u'cls_name': u'GPIOOutput'}]
+        # to data required:
+        # {'cls:ADC, port:3': {'cls_name':'ADC', 'ch_port':3, 'equations': ['zzzz', 'asdfadfad']}}
+        # this removes duplicates via associated key
+
+        def format_io(io_collection):
+            # deal with duplicates...........
+            # duplicate equations allowed, duplicate instances not allowed
+            instanced_io_dict = {}
+            for io in io_collection:
+                cls_str = io['cls_name']
+                ch_port = io['ch_port']
+                equation = io['equation']
+
+                key = 'cls:%s, port:%s' % (cls_str, ch_port)
+                if key not in instanced_io_dict:
+                    io_new_dict = {'cls_name':cls_str, 'ch_port':ch_port}
+                    io_new_dict['equations'] = [equation]
+                    instanced_io_dict[key] = io_new_dict
+                else:
+                    # we can have more then one equation per instance
+                    existing_instance = instanced_io_dict[key]
+                    equations = existing_instance['equations']
+                    if equation not in equations:
+                        equations.append(equation)
+
+            return instanced_io_dict
+
+        self.config_reads = format_io(reads)
+        self.config_writes = format_io(writes)
+
+        log.msg(self.config_reads)
+        log.msg(self.config_writes)
+
         if self.client.protocol.debug:
             log.msg('RPIConfigState - Pushing configs to remote RPI')
 
         msg = {'cmd':common_protocol.ServerCommands.CONFIG,
-               'payload':{'read':reads, 'write':writes}}
+               'payload':{'read':self.config_reads, 'write':self.config_writes}}
 
         self.client.protocol.sendMessage(json.dumps(msg))
 
