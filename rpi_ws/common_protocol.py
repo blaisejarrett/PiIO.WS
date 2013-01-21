@@ -27,11 +27,15 @@ class ServerCommands(object):
     ACK = 'ack'
     CONFIG = 'config'
     DROP_TO_CONFIG = 'drop_to_config'
+    ACK_DATA = 'ack_data'
+    RESUME_STREAMING = 'resume_s'
+    PAUSE_STREAMING = 'pause_s'
 
 class RPIClientCommands(object):
     CONFIG_OK = 'c_ok'
     CONFIG_FAIL = 'c_fail'
     DROP_TO_CONFIG_OK = 'drop_to_config_ok'
+    DATA = 'data'
 
 
 class StateStack(list):

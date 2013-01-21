@@ -8,7 +8,7 @@ import json
 from hashlib import sha1
 import hmac
 import binascii
-import settings, common_protocol
+import settings, common_protocol, buffer
 
 
 class StreamState(common_protocol.State):
@@ -18,6 +18,9 @@ class StreamState(common_protocol.State):
         super(StreamState, self).__init__(protocol)
         self.config_reads = reads
         self.config_writes = writes
+        self.polldata = buffer.UpdateDict()
+        self.ackcount = 0
+        self.paused = True
 
     def onMessage(self, msg):
         msg = json.loads(msg)
@@ -34,6 +37,42 @@ class StreamState(common_protocol.State):
 
             resp_msg = {'cmd':common_protocol.RPIClientCommands.DROP_TO_CONFIG_OK}
             self.protocol.sendMessage(json.dumps(resp_msg))
+            return
+
+        if msg['cmd'] == common_protocol.ServerCommands.ACK_DATA:
+            server_ackcount = msg['ack_count']
+            self.ackcount += server_ackcount
+            if self.ackcount > -10:
+                self.poll_and_send()
+
+        if msg['cmd'] == common_protocol.ServerCommands.RESUME_STREAMING:
+            self.resume_streaming()
+
+        if msg['cmd'] == common_protocol.ServerCommands.PAUSE_STREAMING:
+            self.pause_streaming()
+
+    def poll_and_send(self):
+        if self.ackcount <= -10 or self.paused:
+            return
+
+        for key, value in self.config_reads.iteritems():
+            self.polldata[key] = value['obj'].read()
+
+        if len(self.polldata) > 0:
+            msg = {'cmd':common_protocol.RPIClientCommands.DATA}
+            msg['read'] = self.polldata
+            self.ackcount -= 1
+            self.protocol.sendMessage(json.dumps(msg))
+
+        reactor.callLater(0, self.poll_and_send)
+
+    def pause_streaming(self):
+        self.paused = True
+
+    def resume_streaming(self):
+        self.paused = False
+        self.poll_and_send()
+
 
 class ConfigState(common_protocol.State):
     """
@@ -85,9 +124,9 @@ class ConfigState(common_protocol.State):
 
             # there should be some feedback done here if something fails
             msg = {'cmd':common_protocol.RPIClientCommands.CONFIG_OK}
-            self.protocol.sendMessage(json.dumps(msg))
 
             self.protocol.push_state(StreamState(self.protocol, reads=reads, writes=writes))
+            self.protocol.sendMessage(json.dumps(msg))
 
 
 

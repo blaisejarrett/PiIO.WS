@@ -84,6 +84,9 @@ class IWrite(IBase):
     """
     Interface you should extend to implement a rpi writable interface
     """
+    # this is the default value assumed when no data has been written
+    DEFAULT_VALUE = None
+
     def write(self):
         raise NotImplementedError("Should have implemented this")
 
@@ -96,6 +99,7 @@ class ADC(IRead):
     IO_TYPE = IBase.IO_TYPE_INTEGER
     # we're using an 8 channel ADC
     IO_CHOICES = (
+        (0, 'CH0'),
         (1, 'CH1'),
         (2, 'CH2'),
         (3, 'CH3'),
@@ -103,7 +107,6 @@ class ADC(IRead):
         (5, 'CH5'),
         (6, 'CH6'),
         (7, 'CH7'),
-        (8, 'CH8'),
     )
 
     class ChannelInUseError(Exception): pass
@@ -114,8 +117,6 @@ class ADC(IRead):
         super(ADC, self).__init__(ch_port)
 
     def read(self):
-        # for now simulate IO time
-        time.sleep(1)
         return random.randrange(0, 9999)
 
 

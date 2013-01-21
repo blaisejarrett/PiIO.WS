@@ -13,6 +13,8 @@ from hashlib import sha1
 import hmac
 import urllib2, urllib
 
+import twisted.internet.interfaces
+
 class SiteComm(resource.Resource):
     """
     To handle requests from the website
@@ -111,9 +113,34 @@ class Client(common_protocol.ProtocolState):
     def onClose(self, wasClean, code, reason):
         pass
 
+"""
+User client related protocol and states
+"""
+
+class UserState(ServerState):
+    """
+    Only state for users
+    Users can do the following:
+        query online rpis
+        register as a user of a rpi
+            read data stream for rpi interfaces
+            request write to interface
+                Note: this will be sent back to the user if successful in the data stream
+
+    Server is responsible for:
+        notifying user when rpi disconnects
+
+    """
+    pass
 
 class UserClient(Client):
-    pass
+    def __init__(self, protocol):
+        Client.__init__(self, protocol)
+        self.push_state(UserState(self))
+
+    def onClose(self, wasClean, code, reason):
+        # remove from client list
+        pass
 
 
 """
@@ -129,6 +156,8 @@ class RPIStreamState(ServerState):
         # {'cls:ADC, port:3': {'cls_name':'ADC', 'ch_port':3, 'equations': ['zzzz', 'asdfadfad']}}
         self.config_reads = reads
         self.config_writes = writes
+        self.read_data_buffer = {}
+        self.datamsgcount_ack = 0
 
     def deactivated(self):
         super(RPIStreamState, self).deactivated()
@@ -140,6 +169,17 @@ class RPIStreamState(ServerState):
             # order here is important, pop first!
             self.client.pop_state()
             self.client.current_state().config_io(self.delegate_config_reads, self.delegate_config_writes)
+
+        if msg['cmd'] == common_protocol.RPIClientCommands.DATA:
+            self.datamsgcount_ack += 1
+            read_data = msg['read']
+            for key, value in read_data.iteritems():
+                self.read_data_buffer[key] = value
+            # notify factory to update listening clients
+            if self.datamsgcount_ack >= 5:
+                msg = {'cmd':common_protocol.ServerCommands.ACK_DATA, 'ack_count':self.datamsgcount_ack}
+                self.client.protocol.sendMessage(json.dumps(msg))
+                self.datamsgcount_ack = 0
 
     def drop_to_config(self, reads, writes):
         # drop remote RPI to config state
