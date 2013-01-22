@@ -1,5 +1,6 @@
 from twisted.python import log
 from twisted.internet import threads, reactor
+import twisted.internet.protocol as twistedsockets
 from autobahn.websocket import WebSocketServerFactory, WebSocketServerProtocol, HttpException
 import autobahn.httpstatus as httpstatus
 from twisted.web import resource
@@ -539,3 +540,15 @@ class RPISocketServerFactory(WebSocketServerFactory):
         rpi_client = self.rpi_clients[mac]
         return rpi_client.config_io(reads=configs['read'], writes=configs['write'])
 
+
+class FlashSocketPolicyServerProtocol(twistedsockets.Protocol):
+    """
+    Flash Socket Policy for web-socket-js fallback
+    http://www.adobe.com/devnet/flashplayer/articles/socket_policy_files.html
+    """
+    def connectionMade(self):
+        policy = '<?xml version="1.0"?><!DOCTYPE cross-domain-policy SYSTEM '\
+                 '"http://www.macromedia.com/xml/dtds/cross-domain-policy.dtd">'\
+                 '<cross-domain-policy><allow-access-from domain="*" to-ports="*" /></cross-domain-policy>'
+        self.transport.write(policy)
+        self.transport.loseConnection()

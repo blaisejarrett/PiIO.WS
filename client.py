@@ -7,7 +7,7 @@ import sys
 from rpi_ws.client_protocol import RPIClientProtocol, ReconnectingWebSocketClientFactory
 from rpi_ws import settings
 
-USE_SSL = True
+USE_SSL = False
 PORT = 9000
 SERVER = "localhost"
 DEBUG = True
