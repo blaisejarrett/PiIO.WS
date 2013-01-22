@@ -37,6 +37,9 @@ class RPIClientCommands(object):
     DROP_TO_CONFIG_OK = 'drop_to_config_ok'
     DATA = 'data'
 
+class UserClientCommands(object):
+    RPISTATECHANGE = 'rpi_schange'
+
 
 class StateStack(list):
     def push(self, item):

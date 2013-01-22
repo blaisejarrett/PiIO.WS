@@ -68,6 +68,8 @@ class SiteComm(resource.Resource):
             pass
         # TODO: success validation
 
+        # notify users
+        reactor.callFromThread(self.ws_factory.register_rpi_wsite, rpi)
         # register should return configs
 
 
@@ -83,6 +85,9 @@ class SiteComm(resource.Resource):
             url_response.read()
         except:
             pass
+
+        # notify users
+        reactor.callFromThread(self.ws_factory.disconnect_rpi_wsite, rpi)
 
 
 class ServerState(common_protocol.State):
@@ -113,6 +118,9 @@ class Client(common_protocol.ProtocolState):
     def onClose(self, wasClean, code, reason):
         pass
 
+    def onOpen(self):
+        pass
+
 """
 User client related protocol and states
 """
@@ -131,16 +139,32 @@ class UserState(ServerState):
         notifying user when rpi disconnects
 
     """
-    pass
+    def activated(self):
+        super(UserState, self).activated()
+
+    def onMessage(self, msg):
+        try:
+            msg = json.loads(msg)
+        except:
+            if self.client.protocol.debug:
+                log.msg('UserState.onMessage - JSON error, dropping')
+            self.client.protocol.failConnection()
+
 
 class UserClient(Client):
     def __init__(self, protocol):
         Client.__init__(self, protocol)
-        self.push_state(UserState(self))
+
+    def notifyRPIState(self, rpi, state):
+        msg = {'cmd':common_protocol.UserClientCommands.RPISTATECHANGE, 'rpi_mac':rpi.mac, 'rpi_state':state}
+        self.protocol.sendMessage(json.dumps(msg))
 
     def onClose(self, wasClean, code, reason):
-        # remove from client list
-        pass
+        self.protocol.factory.disconnect_user(self)
+
+    def onOpen(self):
+        self.push_state(UserState(self))
+        self.protocol.factory.register_user(self)
 
 
 """
@@ -330,12 +354,14 @@ class RPIRegisterState(ServerState):
 class RPIClient(Client):
     def __init__(self, protocol):
         Client.__init__(self, protocol)
-        self.push_state(RPIRegisterState(self))
 
     def onClose(self, wasClean, code, reason):
         # if we're registered remove ourselves from active client list
         if hasattr(self, 'mac'):
             self.protocol.factory.disconnect_rpi(self)
+
+    def onOpen(self):
+        self.push_state(RPIRegisterState(self))
 
     def config_io(self, reads, writes):
         """
@@ -415,6 +441,11 @@ class RPIServerProtocol(WebSocketServerProtocol):
 
         self.client.onMessage(msg)
 
+    def onOpen(self):
+        WebSocketServerProtocol.onOpen(self)
+        if self.client is not None:
+            self.client.onOpen()
+
     def onClose(self, wasClean, code, reason):
         """
         Connect closed, cleanup
@@ -437,18 +468,41 @@ class RPISocketServerFactory(WebSocketServerFactory):
         WebSocketServerFactory.__init__(self, *args, **kwargs)
 
         # identify rpi's by their macs
-        # only store registered clients
+        # identify user by peerstr
         self.rpi_clients = {}
-        self.user_client = []
+        self.user_client = {}
+
+    def notify_clients_rpi_state_chang(self, rpi, online=False):
+        if online:
+            state = 'online'
+        else:
+            state = 'offline'
+        for peerstr, user in self.user_client.iteritems():
+            user.notifyRPIState(rpi, state)
+
+    def register_user(self, user):
+        if user.protocol.peerstr not in self.user_client:
+            self.user_client[user.protocol.peerstr] = user
+            if self.debug:
+                log.msg('RPISocketServerFactory.register_user %s' % user.protocol.peerstr)
+
+    def disconnect_user(self, user):
+        if self.debug:
+            log.msg('RPISocketServerFactory.disconnect_user %s' % user.protocol.peerstr)
+        del self.user_client[user.protocol.peerstr]
 
     def register_rpi(self, rpi):
+        # this is called when the RPI has been authenticated with the WS server
         # register on the site server
         reactor.callInThread(self.sitecomm.register_rpi, rpi)
         # register locally to the factory
         self.rpi_clients[rpi.mac] = rpi
         if self.debug:
             log.msg("RPISocketServerFactory.register_rpi - %s registered, %d rpi" % (rpi.mac, len(self.rpi_clients)))
-        # should raise an event to push config if exits ???? we don't cache do we?
+
+    def register_rpi_wsite(self, rpi):
+        # this is called when the RPI has been registers on the website
+        self.notify_clients_rpi_state_chang(rpi, online=True)
 
     def disconnect_rpi(self, rpi):
         if hasattr(rpi, 'mac'):
@@ -456,6 +510,10 @@ class RPISocketServerFactory(WebSocketServerFactory):
                 log.msg("RPISocketServerFactory.disconnect_rpi - %s rpi disconnected" % (rpi.mac,))
             reactor.callInThread(self.sitecomm.disconnect_rpi, rpi)
             del self.rpi_clients[rpi.mac]
+
+    def disconnect_rpi_wsite(self, rpi):
+        # this is called after the RPI disconnect has been notified to the web server
+        self.notify_clients_rpi_state_chang(rpi, online=False)
 
     def config_rpi(self, configs):
         """
