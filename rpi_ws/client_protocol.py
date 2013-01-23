@@ -39,16 +39,16 @@ class StreamState(common_protocol.State):
             self.protocol.sendMessage(json.dumps(resp_msg))
             return
 
-        if msg['cmd'] == common_protocol.ServerCommands.ACK_DATA:
+        elif msg['cmd'] == common_protocol.ServerCommands.ACK_DATA:
             server_ackcount = msg['ack_count']
             self.ackcount += server_ackcount
             if self.ackcount > -10:
                 self.poll_and_send()
 
-        if msg['cmd'] == common_protocol.ServerCommands.RESUME_STREAMING:
+        elif msg['cmd'] == common_protocol.ServerCommands.RESUME_STREAMING:
             self.resume_streaming()
 
-        if msg['cmd'] == common_protocol.ServerCommands.PAUSE_STREAMING:
+        elif msg['cmd'] == common_protocol.ServerCommands.PAUSE_STREAMING:
             self.pause_streaming()
 
     def poll_and_send(self):

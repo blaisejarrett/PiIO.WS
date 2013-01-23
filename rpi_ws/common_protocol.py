@@ -31,6 +31,8 @@ class ServerCommands(object):
     RESUME_STREAMING = 'resume_s'
     PAUSE_STREAMING = 'pause_s'
 
+    RPI_STATE_CHANGE = 'rpi_schange'
+
 class RPIClientCommands(object):
     CONFIG_OK = 'c_ok'
     CONFIG_FAIL = 'c_fail'
@@ -38,7 +40,7 @@ class RPIClientCommands(object):
     DATA = 'data'
 
 class UserClientCommands(object):
-    RPISTATECHANGE = 'rpi_schange'
+    CONNECT_RPI = 'rpi_connect'
 
 
 class StateStack(list):
