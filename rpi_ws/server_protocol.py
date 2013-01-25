@@ -9,7 +9,7 @@ import time
 import os
 import binascii
 import hashlib
-import settings, common_protocol
+import settings, common_protocol, buffer
 from hashlib import sha1
 import hmac
 import urllib2, urllib
@@ -156,20 +156,27 @@ class UserState(ServerState):
 
         if msg['cmd'] == common_protocol.UserClientCommands.CONNECT_RPI:
             mac = msg['rpi_mac']
-            self.register_to_rpi(mac)
+            self.client.register_to_rpi(mac)
 
-    def register_to_rpi(self, rpi_mac):
-        log.msg('registerd..')
-        rpi = self.client.protocol.factory.get_rpi(rpi_mac)
-        if rpi:
-            self.client.associated_rpi = rpi
-            log.msg(self.client.associated_rpi)
 
 
 class UserClient(Client):
     def __init__(self, protocol):
         Client.__init__(self, protocol)
         self.associated_rpi = None
+        self.streaming_buffer = None
+
+    def register_to_rpi(self, rpi_mac):
+        rpi = self.protocol.factory.get_rpi(rpi_mac)
+        if rpi:
+            self.streaming_buffer = buffer.UpdateDict()
+            self.associated_rpi = rpi
+            self.protocol.factory.register_user_to_rpi(self, self.associated_rpi)
+
+    def unregister_to_rpi(self):
+        if self.associated_rpi is not None:
+            self.protocol.factory.unregister_user_to_rpi(self, self.associated_rpi)
+            self.associated_rpi = None
 
     def notifyRPIState(self, rpi, state):
         if state == 'config':
@@ -222,6 +229,14 @@ class RPIStreamState(ServerState):
                 msg = {'cmd':common_protocol.ServerCommands.ACK_DATA, 'ack_count':self.datamsgcount_ack}
                 self.client.protocol.sendMessage(json.dumps(msg))
                 self.datamsgcount_ack = 0
+
+    def resume_streaming(self):
+        msg = {'cmd':common_protocol.ServerCommands.RESUME_STREAMING}
+        self.client.protocol.sendMessage(json.dumps(msg))
+
+    def pause_streaming(self):
+        msg = {'cmd':common_protocol.ServerCommands.PAUSE_STREAMING}
+        self.client.protocol.sendMessage(json.dumps(msg))
 
     def drop_to_config(self, reads, writes):
         # drop remote RPI to config state
@@ -381,6 +396,30 @@ class RPIClient(Client):
     def onOpen(self):
         self.push_state(RPIRegisterState(self))
 
+    def pause_streaming(self):
+        try:
+            state = self.current_state()
+        except IndexError:
+            # RPI has no states
+            return False
+
+        if isinstance(state, RPIStreamState):
+            state.pause_streaming()
+            return True
+        return False
+
+    def resume_streaming(self):
+        try:
+            state = self.current_state()
+        except IndexError:
+            # RPI has no states
+            return False
+
+        if isinstance(state, RPIStreamState):
+            state.resume_streaming()
+            return True
+        return False
+
     def config_io(self, reads, writes):
         """
         read/writes are lsts of dicts with the following:
@@ -489,6 +528,30 @@ class RPISocketServerFactory(WebSocketServerFactory):
         # identify user by peerstr
         self.rpi_clients = {}
         self.user_client = {}
+        # key RPI mac, value list of user clients
+        self.rpi_clients_registered_users = {}
+
+    def register_user_to_rpi(self, client, rpi):
+        if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
+            # RPI wasn't streaming, start streaming!
+            rpi.resume_streaming()
+        if client not in self.rpi_clients_registered_users[rpi.mac]:
+            self.rpi_clients_registered_users[rpi.mac].append(client)
+            if self.debug:
+                log.msg('RPISocketServerFactory.register_user_to_rpi rpi:%s user:%s' %
+                        (rpi.mac, client.protocol.peerstr))
+
+    def unregister_user_to_rpi(self, client, rpi):
+        if rpi is None:
+            return
+        if client in self.rpi_clients_registered_users[rpi.mac]:
+            self.rpi_clients_registered_users[rpi.mac].remove(client)
+            if self.debug:
+                log.msg('RPISocketServerFactory.unregister_user_to_rpi rpi:%s user:%s' %
+                        (rpi.mac, client.protocol.peerstr))
+        if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
+            # Pause streaming
+            rpi.pause_streaming()
 
     def get_rpi(self, rpi_mac):
         if rpi_mac in self.rpi_clients:
@@ -509,6 +572,7 @@ class RPISocketServerFactory(WebSocketServerFactory):
         if self.debug:
             log.msg('RPISocketServerFactory.disconnect_user %s' % user.protocol.peerstr)
         del self.user_client[user.protocol.peerstr]
+        self.unregister_user_to_rpi(user, user.associated_rpi)
 
     def register_rpi(self, rpi):
         # this is called when the RPI has been authenticated with the WS server
@@ -516,6 +580,7 @@ class RPISocketServerFactory(WebSocketServerFactory):
         reactor.callInThread(self.sitecomm.register_rpi, rpi)
         # register locally to the factory
         self.rpi_clients[rpi.mac] = rpi
+        self.rpi_clients_registered_users[rpi.mac] = []
         if self.debug:
             log.msg("RPISocketServerFactory.register_rpi - %s registered, %d rpi" % (rpi.mac, len(self.rpi_clients)))
 
@@ -529,6 +594,7 @@ class RPISocketServerFactory(WebSocketServerFactory):
                 log.msg("RPISocketServerFactory.disconnect_rpi - %s rpi disconnected" % (rpi.mac,))
             reactor.callInThread(self.sitecomm.disconnect_rpi, rpi)
             del self.rpi_clients[rpi.mac]
+            del self.rpi_clients_registered_users[rpi.mac]
 
     def disconnect_rpi_wsite(self, rpi):
         # this is called after the RPI disconnect has been notified to the web server
