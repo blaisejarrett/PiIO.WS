@@ -30,6 +30,7 @@ class ServerCommands(object):
     ACK_DATA = 'ack_data'
     RESUME_STREAMING = 'resume_s'
     PAUSE_STREAMING = 'pause_s'
+    WRITE_DATA = 'write_data'
 
     RPI_STATE_CHANGE = 'rpi_schange'
 

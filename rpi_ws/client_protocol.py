@@ -18,7 +18,8 @@ class StreamState(common_protocol.State):
         super(StreamState, self).__init__(protocol)
         self.config_reads = reads
         self.config_writes = writes
-        self.polldata = buffer.UpdateDict()
+        self.polldata_read = buffer.UpdateDict()
+        self.polldata_write = buffer.UpdateDict()
         self.ackcount = 0
         self.paused = True
 
@@ -51,16 +52,29 @@ class StreamState(common_protocol.State):
         elif msg['cmd'] == common_protocol.ServerCommands.PAUSE_STREAMING:
             self.pause_streaming()
 
+        elif msg['cmd'] == common_protocol.ServerCommands.WRITE_DATA:
+            key = msg['iface_port']
+            value = msg['value']
+            self.write_to_iface(key, value)
+
+    def write_to_iface(self, iface_port, value):
+        if iface_port not in self.config_writes:
+            return
+        self.config_writes[iface_port]['obj'].write(value)
+
     def poll_and_send(self):
         if self.ackcount <= -10 or self.paused:
             return
 
         for key, value in self.config_reads.iteritems():
-            self.polldata[key] = value['obj'].read()
+            self.polldata_read[key] = value['obj'].read()
+        for key, value in self.config_writes.iteritems():
+            self.polldata_write[key] = value['obj'].read()
 
-        if len(self.polldata) > 0:
+        if len(self.polldata_read) > 0 or len(self.polldata_write) > 0:
             msg = {'cmd':common_protocol.RPIClientCommands.DATA}
-            msg['read'] = self.polldata
+            msg['read'] = self.polldata_read
+            msg['write'] = self.polldata_write
             self.ackcount -= 1
             self.protocol.sendMessage(json.dumps(msg))
 
