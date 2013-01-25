@@ -13,6 +13,7 @@ import settings, common_protocol, buffer
 from hashlib import sha1
 import hmac
 import urllib2, urllib
+import math
 
 import twisted.internet.interfaces
 
@@ -206,7 +207,18 @@ class RPIStreamState(ServerState):
         self.config_reads = reads
         self.config_writes = writes
         self.read_data_buffer = {}
+        self.read_data_buffer_eq = {}
+        self.write_data_buffer = {}
         self.datamsgcount_ack = 0
+
+    def evaluate_eq(self, eq, value):
+        if eq != '':
+            # TODO: fix security
+            x = value
+            new_value = eval(eq)
+        else:
+            new_value = value
+        return new_value
 
     def deactivated(self):
         super(RPIStreamState, self).deactivated()
@@ -222,8 +234,28 @@ class RPIStreamState(ServerState):
         if msg['cmd'] == common_protocol.RPIClientCommands.DATA:
             self.datamsgcount_ack += 1
             read_data = msg['read']
+            write_data = msg['write']
             for key, value in read_data.iteritems():
                 self.read_data_buffer[key] = value
+                # perform equation operations here on values
+                # key: 'cls:%s, port:%d, eq:%s'
+                if key in self.config_reads:
+                    for eq in self.config_reads[key]['equations']:
+                        new_key = 'cls:%s, port:%d, eq:%s' % (
+                            self.config_reads[key]['cls_name'],
+                            self.config_reads[key]['ch_port'],
+                            eq,
+                        )
+                        self.read_data_buffer_eq[new_key] = self.evaluate_eq(eq, value)
+                else:
+                    # TODO: drop to config state or something, remote config seems to be invalid
+                    pass
+            if self.client.protocol.debug:
+                log.msg('RPIStreamState - EQs: %s' % str(self.read_data_buffer_eq))
+            for key, value in write_data.iteritems():
+                # equations don't apply to read write_data values here
+                # write equations are applied at write time
+                self.write_data_buffer[key] = value
             # notify factory to update listening clients
             if self.datamsgcount_ack >= 5:
                 msg = {'cmd':common_protocol.ServerCommands.ACK_DATA, 'ack_count':self.datamsgcount_ack}
