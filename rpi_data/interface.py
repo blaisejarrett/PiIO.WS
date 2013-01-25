@@ -1,6 +1,9 @@
 import time
 import random
-
+# SPI adc by blaisejarrett
+from RPiBJ import SPIADC
+# GPIO: http://code.google.com/p/raspberry-gpio-python/
+from RPi import GPIO
 
 class CHPortInUseException(Exception): pass
 class CHPortDoesntExistException(Exception): pass
@@ -87,10 +90,22 @@ class IWrite(IBase):
     # this is the default value assumed when no data has been written
     DEFAULT_VALUE = None
 
-    def write(self):
-        raise NotImplementedError("Should have implemented this")
+    def __init__(self, ch_port):
+        super(IWrite, self).__init__(ch_port)
+        self.last_written_value = self.DEFAULT_VALUE
+
+    def read(self):
+        """
+        By default returns the last written state, If no write calls have been made
+        it returns the value set by DEFAULT_VALUE
+        """
+        return self.last_written_value
+
+    def write(self, value):
+        self.last_written_value = value
 
 
+SPIADC.setup(0, 100000)
 class ADC(IRead):
     """
     Maps to ADC using library
@@ -117,9 +132,9 @@ class ADC(IRead):
         super(ADC, self).__init__(ch_port)
 
     def read(self):
-        return random.randrange(0, 9999)
+        return SPIADC.read(self.ch_port)
 
-
+GPIO.setmode(GPIO.BCM)
 class GPIOInput(IRead):
     """
     Maps to GPIO read only
@@ -149,12 +164,13 @@ class GPIOInput(IRead):
 
     def __init__(self, ch_port):
         super(GPIOInput, self).__init__(ch_port)
+        GPIO.setup(ch_port, GPIO.IN)
 
     def read(self):
         """
         Note: GPIO reads should be faster then network IO, careful of poll rate
         """
-        return True
+        return GPIO.input(self.ch_port)
 
 
 class GPIOOutput(IWrite):
@@ -181,17 +197,24 @@ class GPIOOutput(IWrite):
         (25, 'GPIO25 P22'),
         (27, 'GPIO27 P13'),
     )
+    DEFAULT_VALUE = False
 
     def __init__(self, ch_port):
         super(GPIOOutput, self).__init__(ch_port)
-
+        GPIO.setup(ch_port, GPIO.OUT)
 
     def write(self, value):
-        print "wrote %s" % str(value)
+        if value is True:
+            GPIO.output(self.ch_port, GPIO.HIGH)
+        elif value is False:
+            GPIO.output(self.ch_port, GPIO.LOW)
+        else:
+            # not a boolean value
+            # throw?
+            return
+        super(GPIOOutput, self).write(value)
 
 
-# not actually used...
-class GPIO(GPIOInput, GPIOOutput): pass
 
 
 def get_interface_desc():
