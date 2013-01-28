@@ -556,6 +556,9 @@ class RPISocketServerFactory(WebSocketServerFactory):
     def __init__(self, *args, **kwargs):
         WebSocketServerFactory.__init__(self, *args, **kwargs)
 
+        # safari
+        self.allowHixie76 = True
+
         # identify rpi's by their macs
         # identify user by peerstr
         self.rpi_clients = {}
