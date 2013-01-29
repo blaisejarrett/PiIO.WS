@@ -124,55 +124,52 @@ class Client(common_protocol.ProtocolState):
         pass
 
 """
-User client related protocol and states
+User client related protocol
 """
-
-class UserState(ServerState):
-    """
-    Only state for users
-    Users can do the following:
-        query online rpis
-        register as a user of a rpi
-            read data stream for rpi interfaces
-            request write to interface
-                Note: this will be sent back to the user if successful in the data stream
-
-    Server is responsible for:
-        notifying user when rpi disconnects
-
-    """
-    def __init__(self, client):
-        super(UserState, self).__init__(client)
-
-    def activated(self):
-        super(UserState, self).activated()
-
-    def onMessage(self, msg):
-        try:
-            msg = json.loads(msg)
-        except:
-            if self.client.protocol.debug:
-                log.msg('UserState.onMessage - JSON error, dropping')
-            self.client.protocol.failConnection()
-
-        if msg['cmd'] == common_protocol.UserClientCommands.CONNECT_RPI:
-            mac = msg['rpi_mac']
-            self.client.register_to_rpi(mac)
-
-
 
 class UserClient(Client):
     def __init__(self, protocol):
         Client.__init__(self, protocol)
         self.associated_rpi = None
-        self.streaming_buffer = None
+        self.streaming_buffer_read = None
+        self.streaming_buffer_write = None
+        self.ackcount = 0
+        self.paused = True
 
     def register_to_rpi(self, rpi_mac):
         rpi = self.protocol.factory.get_rpi(rpi_mac)
         if rpi:
-            self.streaming_buffer = buffer.UpdateDict()
+            self.streaming_buffer_read = buffer.UpdateDict()
+            self.streaming_buffer_write = buffer.UpdateDict()
             self.associated_rpi = rpi
             self.protocol.factory.register_user_to_rpi(self, self.associated_rpi)
+            # begin streaming
+            self.resume_streaming()
+
+    def resume_streaming(self):
+        self.paused = False
+        self.copy_and_send()
+
+    def pause_streaming(self):
+        self.paused = True
+
+    def copy_and_send(self):
+        if self.ackcount <= -10 or self.paused:
+            return
+
+        # copy buffers
+        self.protocol.factory.copy_rpi_buffers(self.associated_rpi,
+                                               self.streaming_buffer_read,
+                                               self.streaming_buffer_write)
+
+        if len(self.streaming_buffer_read) > 0 or len(self.streaming_buffer_write) > 0:
+            msg = {'cmd':common_protocol.ServerCommands.WRITE_DATA}
+            msg['read'] = self.streaming_buffer_read
+            msg['write'] = self.streaming_buffer_write
+            self.ackcount -= 1
+            self.protocol.sendMessage(json.dumps(msg))
+
+        reactor.callLater(0, self.copy_and_send)
 
     def unregister_to_rpi(self):
         if self.associated_rpi is not None:
@@ -186,11 +183,28 @@ class UserClient(Client):
         msg = {'cmd':common_protocol.ServerCommands.RPI_STATE_CHANGE, 'rpi_mac':rpi.mac, 'rpi_state':state}
         self.protocol.sendMessage(json.dumps(msg))
 
+    def onMessage(self, msg):
+        try:
+            msg = json.loads(msg)
+        except:
+            if self.protocol.debug:
+                log.msg('UserState.onMessage - JSON error, dropping')
+            self.protocol.failConnection()
+
+        if msg['cmd'] == common_protocol.UserClientCommands.CONNECT_RPI:
+            mac = msg['rpi_mac']
+            self.register_to_rpi(mac)
+
+        elif msg['cmd'] == common_protocol.UserClientCommands.ACK_DATA:
+            ackcount = msg['ack_count']
+            self.ackcount += ackcount
+            if self.ackcount > -10:
+                self.copy_and_send()
+
     def onClose(self, wasClean, code, reason):
         self.protocol.factory.disconnect_user(self)
 
     def onOpen(self):
-        self.push_state(UserState(self))
         self.protocol.factory.register_user(self)
 
 """
@@ -428,6 +442,21 @@ class RPIClient(Client):
     def onOpen(self):
         self.push_state(RPIRegisterState(self))
 
+    def copy_buffers(self, read_buffer, write_buffer):
+        try:
+            state = self.current_state()
+        except IndexError:
+            # RPI has no states
+            return False
+        if isinstance(state, RPIStreamState):
+            for key, value in state.read_data_buffer_eq.iteritems():
+                read_buffer[key] = value
+            for key, value in state.write_data_buffer.iteritems():
+                write_buffer[key] = value
+
+            return True
+        return False
+
     def pause_streaming(self):
         try:
             state = self.current_state()
@@ -587,6 +616,9 @@ class RPISocketServerFactory(WebSocketServerFactory):
         if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
             # Pause streaming
             rpi.pause_streaming()
+
+    def copy_rpi_buffers(self, rpi, read_buffer, write_buffer):
+        rpi.copy_buffers(read_buffer, write_buffer)
 
     def get_rpi(self, rpi_mac):
         if rpi_mac in self.rpi_clients:
