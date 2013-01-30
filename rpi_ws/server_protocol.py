@@ -158,6 +158,7 @@ class UserClient(Client):
             return
 
         # copy buffers
+        # TODO: change from this CPU intensive polling approach to an event driven approach
         self.protocol.factory.copy_rpi_buffers(self.associated_rpi,
                                                self.streaming_buffer_read,
                                                self.streaming_buffer_write)
@@ -172,8 +173,8 @@ class UserClient(Client):
         reactor.callLater(0, self.copy_and_send)
 
     def unregister_to_rpi(self):
+        self.pause_streaming()
         if self.associated_rpi is not None:
-            self.protocol.factory.unregister_user_to_rpi(self, self.associated_rpi)
             self.associated_rpi = None
 
     def notifyRPIState(self, rpi, state):
@@ -606,6 +607,7 @@ class RPISocketServerFactory(WebSocketServerFactory):
                         (rpi.mac, client.protocol.peerstr))
 
     def unregister_user_to_rpi(self, client, rpi):
+        client.unregister_to_rpi()
         if rpi is None:
             return
         if client in self.rpi_clients_registered_users[rpi.mac]:
