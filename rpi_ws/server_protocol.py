@@ -204,6 +204,12 @@ class UserClient(Client):
             if self.ackcount > -10:
                 self.copy_and_send()
 
+        elif msg['cmd'] == common_protocol.UserClientCommands.WRITE_DATA:
+            port = msg['iface_port']
+            value = msg['value']
+            if self.associated_rpi is not None:
+                self.associated_rpi.write_interface_data(port, value)
+
     def onClose(self, wasClean, code, reason):
         self.protocol.factory.disconnect_user(self)
 
@@ -226,6 +232,8 @@ class RPIStreamState(ServerState):
         self.read_data_buffer = {}
         self.read_data_buffer_eq = {}
         self.write_data_buffer = {}
+        self.write_data_buffer_eq = {}
+        self.write_data_eq_map = {}
         self.datamsgcount_ack = 0
 
     def evaluate_eq(self, eq, value):
@@ -270,9 +278,25 @@ class RPIStreamState(ServerState):
             if self.client.protocol.debug:
                 log.msg('RPIStreamState - EQs: %s' % str(self.read_data_buffer_eq))
             for key, value in write_data.iteritems():
-                # equations don't apply to read write_data values here
-                # write equations are applied at write time
+                # equations for write interfaces are applied on the returned value
+                # input value to interfaces are unchanged
                 self.write_data_buffer[key] = value
+                # key: 'cls:%s, port:%d, eq:%s'
+                if key in self.config_writes:
+                    for eq in self.config_writes[key]['equations']:
+                        new_key = 'cls:%s, port:%d, eq:%s' % (
+                            self.config_writes[key]['cls_name'],
+                            self.config_writes[key]['ch_port'],
+                            eq,
+                        )
+                        self.write_data_eq_map[new_key] = key
+                        self.write_data_buffer_eq[new_key] = {
+                            'calculated':self.evaluate_eq(eq, value),
+                            'real':value,
+                        }
+                else:
+                    # TODO: drop to config state or something, remote config seems to be invalid
+                    pass
             # notify factory to update listening clients
             if self.datamsgcount_ack >= 5:
                 msg = {'cmd':common_protocol.ServerCommands.ACK_DATA, 'ack_count':self.datamsgcount_ack}
@@ -287,6 +311,14 @@ class RPIStreamState(ServerState):
 
     def pause_streaming(self):
         msg = {'cmd':common_protocol.ServerCommands.PAUSE_STREAMING}
+        self.client.protocol.sendMessage(json.dumps(msg))
+
+    def write_interface_data(self, key, value):
+        # removes the EQ from the key sent by the client
+        config_key = self.write_data_eq_map[key]
+        msg = {'cmd':common_protocol.ServerCommands.WRITE_DATA,
+               'iface_port':config_key,
+               'value':value}
         self.client.protocol.sendMessage(json.dumps(msg))
 
     def drop_to_config(self, reads, writes):
@@ -456,7 +488,7 @@ class RPIClient(Client):
         if isinstance(state, RPIStreamState):
             for key, value in state.read_data_buffer_eq.iteritems():
                 read_buffer[key] = value
-            for key, value in state.write_data_buffer.iteritems():
+            for key, value in state.write_data_buffer_eq.iteritems():
                 write_buffer[key] = value
 
             return True
@@ -483,6 +515,18 @@ class RPIClient(Client):
 
         if isinstance(state, RPIStreamState):
             state.resume_streaming()
+            return True
+        return False
+
+    def write_interface_data(self, key, data):
+        try:
+            state = self.current_state()
+        except IndexError:
+            # RPI has no states
+            return False
+
+        if isinstance(state, RPIStreamState):
+            state.write_interface_data(key, data)
             return True
         return False
 

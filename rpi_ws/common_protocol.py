@@ -43,6 +43,7 @@ class RPIClientCommands(object):
 class UserClientCommands(object):
     CONNECT_RPI = 'rpi_connect'
     ACK_DATA = 'ack_data'
+    WRITE_DATA = 'write_data'
 
 
 class StateStack(list):
