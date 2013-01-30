@@ -158,7 +158,6 @@ class UserClient(Client):
             return
 
         # copy buffers
-        # TODO: change from this CPU intensive polling approach to an event driven approach
         self.protocol.factory.copy_rpi_buffers(self.associated_rpi,
                                                self.streaming_buffer_read,
                                                self.streaming_buffer_write)
@@ -169,8 +168,11 @@ class UserClient(Client):
             msg['write'] = self.streaming_buffer_write
             self.ackcount -= 1
             self.protocol.sendMessage(json.dumps(msg))
-
-        reactor.callLater(0, self.copy_and_send)
+            # keep polling until we run out of data
+            reactor.callLater(0, self.copy_and_send)
+        else:
+            # when there's new data resume will be called
+            self.pause_streaming()
 
     def unregister_to_rpi(self):
         self.pause_streaming()
@@ -276,6 +278,8 @@ class RPIStreamState(ServerState):
                 msg = {'cmd':common_protocol.ServerCommands.ACK_DATA, 'ack_count':self.datamsgcount_ack}
                 self.client.protocol.sendMessage(json.dumps(msg))
                 self.datamsgcount_ack = 0
+            # notify factory of new data event
+            self.client.protocol.factory.rpi_new_data_event(self.client)
 
     def resume_streaming(self):
         msg = {'cmd':common_protocol.ServerCommands.RESUME_STREAMING}
@@ -618,6 +622,11 @@ class RPISocketServerFactory(WebSocketServerFactory):
         if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
             # Pause streaming
             rpi.pause_streaming()
+
+    def rpi_new_data_event(self, rpi):
+        # resume streaming on any RPIs waiting for new data
+        for client in self.rpi_clients_registered_users[rpi.mac]:
+            client.resume_streaming()
 
     def copy_rpi_buffers(self, rpi, read_buffer, write_buffer):
         rpi.copy_buffers(read_buffer, write_buffer)
