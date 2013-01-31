@@ -137,6 +137,10 @@ class UserClient(Client):
         self.paused = True
 
     def register_to_rpi(self, rpi_mac):
+        # notify factory we want to unregister if registered first
+        self.ackcount = 0
+        if self.associated_rpi is not None:
+            self.protocol.factory.unregister_user_to_rpi(self, self.associated_rpi)
         rpi = self.protocol.factory.get_rpi(rpi_mac)
         if rpi:
             self.streaming_buffer_read = buffer.UpdateDict()
@@ -247,6 +251,11 @@ class RPIStreamState(ServerState):
 
     def deactivated(self):
         super(RPIStreamState, self).deactivated()
+        self.client.protocol.factory.notify_clients_rpi_state_change(self.client, state='drop_stream')
+
+    def activated(self):
+        super(RPIStreamState, self).deactivated()
+        self.client.protocol.factory.notify_clients_rpi_state_change(self.client, state='stream')
 
     def onMessage(self, msg):
         msg = json.loads(msg)
@@ -658,11 +667,12 @@ class RPISocketServerFactory(WebSocketServerFactory):
         client.unregister_to_rpi()
         if rpi is None:
             return
-        if client in self.rpi_clients_registered_users[rpi.mac]:
-            self.rpi_clients_registered_users[rpi.mac].remove(client)
-            if self.debug:
-                log.msg('RPISocketServerFactory.unregister_user_to_rpi rpi:%s user:%s' %
-                        (rpi.mac, client.protocol.peerstr))
+        if rpi.mac in self.rpi_clients_registered_users:
+            if client in self.rpi_clients_registered_users[rpi.mac]:
+                self.rpi_clients_registered_users[rpi.mac].remove(client)
+                if self.debug:
+                    log.msg('RPISocketServerFactory.unregister_user_to_rpi rpi:%s user:%s' %
+                            (rpi.mac, client.protocol.peerstr))
         if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
             # Pause streaming
             rpi.pause_streaming()
@@ -744,8 +754,6 @@ class RPISocketServerFactory(WebSocketServerFactory):
             return False
 
         rpi_client = self.rpi_clients[mac]
-        # notify any listening users of RPI config change
-        self.notify_clients_rpi_state_change(rpi_client, state='config')
         return rpi_client.config_io(reads=configs['read'], writes=configs['write'])
 
 
