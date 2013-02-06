@@ -673,7 +673,7 @@ class RPISocketServerFactory(WebSocketServerFactory):
                 if self.debug:
                     log.msg('RPISocketServerFactory.unregister_user_to_rpi rpi:%s user:%s' %
                             (rpi.mac, client.protocol.peerstr))
-        if len(self.rpi_clients_registered_users[rpi.mac]) == 0:
+        if rpi.mac not in self.rpi_clients_registered_users or len(self.rpi_clients_registered_users[rpi.mac]) == 0:
             # Pause streaming
             rpi.pause_streaming()
 
