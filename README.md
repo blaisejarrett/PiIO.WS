@@ -1,4 +1,4 @@
-PiIO WebSocket Server/Client
+PiIO WebSocket Server / RPI Client
 ============
 
 Raspberry Pi remote IO
